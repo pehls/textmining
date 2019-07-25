@@ -1,0 +1,402 @@
+---
+title: "R Notebook"
+output:
+  html_document:
+    df_print: paged
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*. 
+
+```{r message=FALSE, warning=FALSE, paged.print=FALSE, results='hide'}
+rm_accent <- function(str,pattern="all") {
+  # Rotinas e funções úteis V 1.0
+  # rm.accent - REMOVE ACENTOS DE PALAVRAS
+  # Função que tira todos os acentos e pontuações de um vetor de strings.
+  # Parâmetros:
+  # str - vetor de strings que terão seus acentos retirados.
+  # patterns - vetor de strings com um ou mais elementos indicando quais acentos deverão ser retirados.
+  #            Para indicar quais acentos deverão ser retirados, um vetor com os símbolos deverão ser passados.
+  #            Exemplo: pattern = c("´", "^") retirará os acentos agudos e circunflexos apenas.
+  #            Outras palavras aceitas: "all" (retira todos os acentos, que são "´", "`", "^", "~", "¨", "ç")
+  if(!is.character(str))
+    str <- as.character(str)
+  
+  pattern <- unique(pattern)
+  
+  if(any(pattern=="Ç"))
+    pattern[pattern=="Ç"] <- "ç"
+  
+  symbols <- c(
+    acute = "áéíóúÁÉÍÓÚýÝ",
+    grave = "àèìòùÀÈÌÒÙ",
+    circunflex = "âêîôûÂÊÎÔÛ",
+    tilde = "ãõÃÕñÑ",
+    umlaut = "äëïöüÄËÏÖÜÿ",
+    cedil = "çÇ"
+  )
+  
+  nudeSymbols <- c(
+    acute = "aeiouAEIOUyY",
+    grave = "aeiouAEIOU",
+    circunflex = "aeiouAEIOU",
+    tilde = "aoAOnN",
+    umlaut = "aeiouAEIOUy",
+    cedil = "cC"
+  )
+  
+  accentTypes <- c("´","`","^","~","¨","ç")
+  
+  if(any(c("all","al","a","todos","t","to","tod","todo")%in%pattern)) # opcao retirar todos
+    return(chartr(paste(symbols, collapse=""), paste(nudeSymbols, collapse=""), str))
+  
+  for(i in which(accentTypes%in%pattern))
+    str <- chartr(symbols[i],nudeSymbols[i], str)
+  
+  return(str)
+}
+
+packages <- c('dplyr','readxl','tm','ggplot2','topicmodels','magrittr','tidyverse','tidytext','ggraph', 'ptstem', 'igraph','widyr','reshape','scales','lubridate', 'qdapRegex', 'factoextra','ggfortify','qdap','lexiconPT')
+inst.pack <- function(pkg){
+  new.pkg <- pkg[!(pkg %in% installed.packages()[, "Package"])]
+  if (length(new.pkg)) 
+    install.packages(new.pkg, dependencies = TRUE)
+  sapply(pkg, require, character.only = TRUE)
+}
+inst.pack(packages)
+
+data("oplexicon_v3.0")
+data("sentiLex_lem_PT02")
+data("oplexicon_v2.1")
+
+op30 <- oplexicon_v3.0
+sent <- sentiLex_lem_PT02
+op21 <- oplexicon_v2.1
+
+setwd("C:\\Users\\gabriel.pehls\\Google Drive\\MACROS EXCEL\\abertas")
+
+data_text <- read_excel("All_HEI.xlsx",
+                        na="", 
+                        sheet = "Planilha1", col_types = "text")
+data_text <- data_text[data_text$IES=="FADERGS",]
+data_text <- data_text[1:1000,]
+data_text$`Response Label`<- rm_accent(data_text$`Response Label`)
+data_text$`Response Label`<- rm_emoticon(data_text$`Response Label`)
+StopWords <- c(rm_accent(stopwords("portuguese")),
+               "ter", "ser", "mai", "ulo", "a ", "m", "para", "par","c")
+data_text$`Response Label`<- rm_stopwords(data_text$`Response Label`, StopWords)
+for (i in 1:nrow(data_text)) {
+  data_text$`Response Label`[i] <- paste(data_text$`Response Label`[i][[1]], collapse = " ")
+}
+
+data_text$`Response Label`<- as.character(data_text$`Response Label`)
+data_text$`Response Label`<- ptstem(data_text$`Response Label`, 
+                                    algorithm = "hunspell",
+                                    complete = FALSE)
+```
+
+
+```{r message=FALSE, warning=FALSE, paged.print=FALSE, results='hide'}
+corpus <- Corpus(VectorSource(data_text$`Response Label`))
+corpus <- tm_map(corpus, content_transformer(tolower))
+corpus <- tm_map(corpus, removePunctuation)
+corpus <- tm_map(corpus, removeNumbers)
+corpus <- tm_map(corpus, removeWords, StopWords)
+```
+```{r}
+tdmatrix <- TermDocumentMatrix(corpus)
+freq.terms = findFreqTerms(tdmatrix, lowfreq = (nrow(data_text)/10))
+inspect(tdmatrix)
+```
+```{r}
+term.freq<-NULL
+df<-NULL
+term.freq <- rowSums(as.matrix(tdmatrix))
+term.freq <- subset(term.freq, term.freq >=(nrow(data_text)/10))
+df <- data.frame(term = names(term.freq), freq = term.freq)
+wordcloud::wordcloud(df$term, df$freq)
+
+ggplot(df, aes(x = reorder(term, freq), y = freq))+geom_bar(stat = "identity", fill="blue", colour = "black")+
+  xlab("Termos")+ ylab("Freq.") + coord_flip()
+```
+```{r}
+tdmatrix <- TermDocumentMatrix(corpus)
+freq.terms = findFreqTerms(tdmatrix, lowfreq = 30)
+term.freq<-NULL
+df<-NULL
+term.freq <- rowSums(as.matrix(tdmatrix))
+term.freq <- subset(term.freq, term.freq >=30)
+df <- data.frame(term = names(term.freq), freq = term.freq)
+
+```
+
+
+```{r}
+distMatrixnew <- dist(scale(tdmatrix))
+
+fitnew = hclust(distMatrixnew, method = "ward.D")
+
+plot(fitnew)
+```
+```{r}
+plot(fitnew)
+rect.hclust(fitnew, k=4)
+```
+
+```{r}
+clustering <- cutree(fitnew, k=4)
+data <- data.frame(tdmatrix$dimnames$Terms, clustering )
+names(data) <- c("Words","cluster")
+
+# Use hcut() which compute hclust and cut the tree
+hc.cut <- hcut(distMatrixnew, k = 4, hc_method = "ward.D")
+# Visualize dendrogram
+#fviz_dend(hc.cut)
+# Visualize cluster
+fviz_cluster(hc.cut, data = distMatrixnew, ellipse.type = "convex")
+
+```
+
+
+```{r}
+mnew <- as.matrix(tdmatrix)
+t_mnew<-t(mnew)
+rowTotals <- apply(t_mnew , 1, sum)
+dtm.new   <- t_mnew[rowTotals> 0, ]     
+
+for(i in 2:7){
+  lda<-NULL
+  lda <- LDA(dtm.new, k=i)
+  term <-terms(lda,i)
+  print(term)
+  print("----------------------------")
+}
+```
+
+```{r}
+
+for (i in 1:length(StopWords)) {
+  for (j in 1:length(data_text$`Response Label`)) {
+    data_text$`Response Label`[j] <- stringr::str_replace(data_text$`Response Label`[j], 
+                         paste(paste(" ", StopWords[i],sep=""), " ", sep=""),
+                         " ")
+    
+  }
+}
+
+```
+
+
+```{r}
+series <- tibble()
+
+
+for(i in 1:nrow(data_text)) {
+  
+  clean <- tibble(chapter = seq_along(data_text$ID[i]),
+                  text = data_text$`Response Label`[i]) %>%
+    filter(!text %in% StopWords) %>%
+    unnest_tokens(bigram, text, token = "ngrams", n = 2) %>%
+    mutate(book = data_text$ID[i]) %>%
+    select(book, everything())
+  
+  series <- rbind(series, clean)
+}
+```
+
+
+```{r}
+series %>%
+  filter(!is.na(bigram)) %>%
+  count(bigram, sort = TRUE)
+
+series %>%
+  separate(bigram, c("word1", "word2"), sep = " ") %>%
+  filter(!word1 %in% StopWords,
+         !word2 %in% StopWords,
+         !is.na(word1),
+         !is.na(word2)) %>%
+  count(word1, word2, sort = TRUE)
+
+
+bigram_tf_idf <- series %>%
+  filter(!is.na(bigram),
+         !is.na(book)) %>%
+  count(book, bigram, sort = TRUE) %>%
+  bind_tf_idf(bigram, book, n) %>%
+  arrange(desc(tf_idf))
+
+
+
+set.seed(123)
+bigram_graph<-NULL
+```
+
+```{r}
+
+ps_words <- tibble(chapter = seq_along(data_text$ID),
+                   text = data_text$`Response Label`) %>%
+                      unnest_tokens(word, text) %>%
+                          filter(!word %in% StopWords)
+
+set.seed(123)
+
+ps_words %>%
+  group_by(word) %>%
+  filter(n() >= 5) %>%
+  pairwise_cor(word, chapter) %>%
+  filter(!is.na(correlation),
+         correlation > .50) %>%
+  graph_from_data_frame() %>%
+  ggraph(layout = "fr") +
+  geom_edge_link(aes(edge_alpha = correlation), show.legend = FALSE) +
+  geom_node_point(color = "lightblue", size = 5) +
+  geom_node_text(aes(label = name), repel = TRUE) +
+  theme_void()
+
+```
+
+
+
+```{r}
+
+matrix.dtm <- as.matrix(tdmatrix)
+#k.means <- kmeans(matrix.dtm, centers = 2)
+
+rng<-2:9 #K from 2 to 20
+tries <-50 #Run the K Means algorithm 100 times
+avg.totw.ss <-integer(length(rng)) #Set up an empty vector to hold all of points
+for(v in rng){ # For each value of the range variable
+ v.totw.ss <-integer(tries) #Set up an empty vector to hold the 100 tries
+ for(i in 1:tries){
+ k.temp <-kmeans(matrix.dtm,centers=v) #Run kmeans
+ v.totw.ss[i] <-k.temp$tot.withinss#Store the total withinss
+ }
+ avg.totw.ss[v-1] <-mean(v.totw.ss) #Average the 100 total withinss
+}
+plot(rng,avg.totw.ss,type="b", main="Total Within SS by Various K",
+ ylab="Average Total Within Sum of Squares",
+ xlab="Value of K")
+
+```
+
+```{r}
+k.means <- kmeans(as.matrix(tdmatrix), centers = 4)
+#pca <- prcomp(as.matrix(tdmatrix))
+#fviz_cluster(k.means, data= pca$scores)
+k.means$Terms <- names(k.means$cluster)
+matrix.dtm$Terms <- rownames(matrix.dtm)
+#merge <- merge(matrix.dtm, k.means$cluster)
+autoplot(k.means, 
+         data=as.matrix(tdmatrix), 
+         colour='cluster', 
+         label=TRUE)
+```
+
+
+```{r}
+#data_terms<-cbind(data_text[,c("ID","IES")], t(mnew) )
+#reshape<-melt(data_terms, id=c("ID","IES"))
+
+#pca <- princomp(as.matrix(tdmatrix))
+#z <- pca$scores[,1:2]
+# <- as.data.frame(z)
+
+#write.csv2(reshape, "reshape.csv")
+#write.csv2(data, "clusters.csv")
+```
+##Sentiment analysis
+#usamos a base reshapada para agregar a classificação de polaridade das bases do lexiconPT
+```{r}
+
+reshape <- melt(data_text, id=c("ID","IES"))
+names(reshape) <- c("ID","IES","variable","frase")
+reshape$value <- reshape$frase
+
+reshape <- unnest_tokens(reshape, input = "frase", output =  "term")
+
+polaridades <- reshape %>%
+                      left_join(op30, by = "term") %>%
+                      left_join(sent %>% select(term, lex_polarity = polarity), by = "term") %>%
+                      left_join(op21 %>% select(term, pol21 = polarity), by= "term") %>%
+                      select(ID, IES, term, polarity, lex_polarity, pol21) %>%
+                      filter(!is.na(polarity) | !is.na(lex_polarity) | !is.na(pol21))
+(polaridades)
+```
+##juntando polaridades
+```{r}
+#data_text <- data_text %>%
+#  inner_join(polaridades, by="ID")
+#polaridades$polarity <- ifelse(is.na(polaridades$polarity), 0, polaridades$polarity)
+#polaridades$pol21 <- ifelse(is.na(polaridades$pol21), 0, polaridades$pol21)
+resumo.polaridades <- polaridades %>%
+  select(ID, polarity, pol21) %>%
+  group_by(ID) %>%
+  summarise(sum_polarity = sum(polarity),
+            sum_21 = sum(pol21),
+            n_words = n()
+  ) %>%
+  ungroup() %>%
+  rowwise() 
+
+resumo.polaridades$indice <- resumo.polaridades$sum_polarity /resumo.polaridades$n_words
+plot(resumo.polaridades$indice)
+                                  
+```
+
+```{r}
+p <- resumo.polaridades %>% 
+  ggplot(aes(x = sum_polarity, y = sum_21)) +
+    geom_point(aes(color = n_words)) + 
+    scale_color_continuous(low = "green", high = "red") +
+    labs(x = "Polaridade no OpLexicon", y = "Polaridade no SentiLex") +
+    #geom_smooth(method = "lm") +
+    geom_vline(xintercept = 0, linetype = "dashed") +
+    geom_hline(yintercept = 0, linetype = "dashed")
+
+p
+```
+##fillnas com 0
+```{r}
+#data_text <- data_text %>%
+#  inner_join(polaridades, by="ID")
+polaridades$polarity <- ifelse(is.na(polaridades$polarity), 0, polaridades$polarity)
+polaridades$pol21 <- ifelse(is.na(polaridades$pol21), 0, polaridades$pol21)
+resumo.polaridades <- polaridades %>%
+  select(ID, polarity, pol21) %>%
+  group_by(ID) %>%
+  summarise(sum_polarity = sum(polarity),
+            sum_21 = sum(pol21),
+            n_words = n()
+  ) %>%
+  ungroup() %>%
+  rowwise() 
+
+resumo.polaridades$indice <- resumo.polaridades$sum_polarity /resumo.polaridades$n_words
+plot(resumo.polaridades$indice)
+                                  
+```
+
+##definindo sentimento como pos - negativo
+```{r}
+polaridades.table <- polaridades %>%
+  filter(polarity != 0) %>%
+  mutate(sentiment = ifelse(polarity < 0, "negativo", "positivo")) %>%
+  count(ID, sentiment) %>%
+  spread(sentiment, n, fill = 0) %>%
+  mutate(sentimento = positivo - negativo) %>%
+  ungroup() %>%
+  arrange(ID)
+
+data_text <- data_text %>%
+  left_join(resumo.polaridades, by = "ID") %>%
+  select (ID, 'Response Label', sum_polarity, sum_21, n_words, indice )
+
+data_text <- data_text %>%
+  left_join(polaridades.table, by = "ID") %>%
+  select (ID, 'Response Label', sum_polarity, sum_21, n_words, indice, negativo, positivo, sentimento)
+
+head(data_text) 
+```
+
